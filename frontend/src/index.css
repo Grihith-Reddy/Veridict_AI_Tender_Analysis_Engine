@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-deep: #0a0f1e;
+  --surface: #111827;
+  --accent: #3b82f6;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  background-color: var(--bg-deep);
+  background-image:
+    radial-gradient(ellipse 80% 55% at 50% -20%, rgba(59, 130, 246, 0.12), transparent),
+    radial-gradient(ellipse 50% 40% at 100% 100%, rgba(16, 185, 129, 0.05), transparent);
+  color: #f9fafb;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(59, 130, 246, 0.35) transparent;
+  }
+}
