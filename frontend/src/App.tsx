@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useMemo, useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatApiError, loadDemoSeed } from "./api";
 import { AnomalyPanel } from "./components/AnomalyPanel";
 import { BidderMatrix } from "./components/BidderMatrix";
@@ -9,343 +9,189 @@ import { Upload } from "./components/Upload";
 import { WizardProvider, useWizard, type WizardContextValue, type WizardStep } from "./context/WizardContext";
 import type { DemoSeedResponse, VerdictDecision } from "./types";
 
-/* ── Splash screen ─────────────────────────────────────────────────────────── */
-function SplashScreen({ onDone }: { onDone: () => void }) {
+/* ── Step config ─────────────────────────────────────────────────── */
+const STEPS: { id: WizardStep; label: string; code: string }[] = [
+  { id: "upload",   label: "Intake", code: "01" },
+  { id: "criteria", label: "Criteria", code: "02" },
+  { id: "matrix",   label: "Lattice", code: "03" },
+];
+
+function IconUpload() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 4v12M12 4l4 4M12 4l-4 4M5 20h14" />
+    </svg>
+  );
+}
+function IconCriteria() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  );
+}
+function IconMatrix() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <rect x="4" y="4" width="6" height="6" rx="1.2" /><rect x="14" y="4" width="6" height="6" rx="1.2" />
+      <rect x="4" y="14" width="6" height="6" rx="1.2" /><rect x="14" y="14" width="6" height="6" rx="1.2" />
+    </svg>
+  );
+}
+const STEP_ICONS = [IconUpload, IconCriteria, IconMatrix];
+
+/* ── Dot expand splash ───────────────────────────────────────────── */
+function SplashOverlay({ onComplete }: { onComplete: () => void }) {
+  const [phase, setPhase] = useState<"dot" | "expand" | "done">("dot");
+  const overlayRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const t = setTimeout(onDone, 2600);
+    // Small delay then expand
+    const t1 = setTimeout(() => setPhase("expand"), 500);
+    return () => clearTimeout(t1);
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "expand") return;
+    const t = setTimeout(() => {
+      setPhase("done");
+      setTimeout(onComplete, 350);
+    }, 800);
     return () => clearTimeout(t);
-  }, [onDone]);
+  }, [phase, onComplete]);
 
   return (
-    <div className="splash-root">
-      <div className="splash-pill">
-        <span className="splash-dot" />
-        <span className="splash-wordmark">VERIDICT</span>
-        <span className="splash-dot" />
+    <div
+      ref={overlayRef}
+      style={{
+        position: "fixed", inset: 0, zIndex: 9999,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "#ffffff",
+        opacity: phase === "done" ? 0 : 1,
+        transition: phase === "done" ? "opacity 0.35s ease" : "none",
+        pointerEvents: phase === "done" ? "none" : "all",
+      }}
+    >
+      <div
+        style={{
+          width: phase === "dot" ? 14 : "200vmax",
+          height: phase === "dot" ? 14 : "200vmax",
+          borderRadius: phase === "dot" ? "50%" : "50%",
+          background: "#0a0a0a",
+          transition: phase === "expand"
+            ? "width 0.78s cubic-bezier(0.65,0,0.35,1), height 0.78s cubic-bezier(0.65,0,0.35,1)"
+            : "none",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          overflow: "hidden",
+        }}
+      >
+        {phase !== "dot" && (
+          <span
+            className="font-display"
+            style={{
+              fontWeight: 800,
+              fontSize: "clamp(1.25rem, 4vw, 2rem)",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "rgba(255,255,255,0.92)",
+              opacity: phase === "expand" ? 1 : 0,
+              transition: "opacity 0.35s ease 0.38s",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Veridict
+          </span>
+        )}
       </div>
-      <p className="splash-sub">Evidence-Based Decision Intelligence</p>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne+Mono&family=DM+Sans:wght@300;400;500&display=swap');
-
-        :root {
-          --navy:    #080d18;
-          --surface: #0d1525;
-          --panel:   #111d30;
-          --border:  rgba(99,132,199,0.18);
-          --accent:  #4f8ef7;
-          --frost:   #a8c4ff;
-          --muted:   #5a7097;
-          --txt:     #dce8ff;
-          --eligible:#22d48f;
-          --deny:    #f05b5b;
-          --review:  #f4a14a;
-          --line:    rgba(99,132,199,0.14);
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          background: var(--navy);
-          color: var(--txt);
-          font-family: 'DM Sans', sans-serif;
-          -webkit-font-smoothing: antialiased;
-        }
-
-        .splash-root {
-          position: fixed; inset: 0; z-index: 9999;
-          background: var(--navy);
-          display: flex; flex-direction: column;
-          align-items: center; justify-content: center; gap: 20px;
-          animation: splashFade 0.5s ease 2.1s forwards;
-        }
-        @keyframes splashFade { to { opacity: 0; pointer-events: none; } }
-
-        .splash-pill {
-          display: flex; align-items: center; gap: 14px;
-          background: var(--panel);
-          border: 1px solid rgba(79,142,247,0.35);
-          border-radius: 999px;
-          padding: 14px 32px;
-          animation: pillIn 0.7s cubic-bezier(0.16,1,0.3,1) both;
-          box-shadow: 0 0 60px rgba(79,142,247,0.12), inset 0 1px 0 rgba(255,255,255,0.05);
-        }
-        @keyframes pillIn {
-          from { opacity: 0; transform: scale(0.82) translateY(16px); }
-          to   { opacity: 1; transform: scale(1) translateY(0); }
-        }
-
-        .splash-dot {
-          width: 6px; height: 6px; border-radius: 50%;
-          background: var(--accent);
-          animation: dotPulse 1.2s ease-in-out infinite alternate;
-          box-shadow: 0 0 10px var(--accent);
-        }
-        .splash-dot:last-child { animation-delay: 0.3s; }
-        @keyframes dotPulse { to { opacity: 0.3; } }
-
-        .splash-wordmark {
-          font-family: 'Syne Mono', monospace;
-          font-size: 22px;
-          letter-spacing: 0.28em;
-          color: var(--txt);
-        }
-
-        .splash-sub {
-          font-family: 'DM Sans', sans-serif;
-          font-size: 12px;
-          font-weight: 300;
-          letter-spacing: 0.18em;
-          color: var(--muted);
-          text-transform: uppercase;
-          animation: subIn 0.6s ease 0.4s both;
-        }
-        @keyframes subIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-
-        /* ── App shell ───────────────────────────────────────────────────── */
-        .vd-shell {
-          min-height: 100vh;
-          background: var(--navy);
-          background-image:
-            radial-gradient(ellipse 60% 40% at 70% 0%, rgba(79,142,247,0.06) 0%, transparent 70%),
-            radial-gradient(ellipse 40% 30% at 10% 80%, rgba(34,212,143,0.04) 0%, transparent 60%);
-        }
-
-        .vd-inner {
-          max-width: 1600px; margin: 0 auto;
-          padding: 2.5rem 2.5rem 4rem;
-          animation: appIn 0.6s ease 2.3s both;
-        }
-        @keyframes appIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-
-        /* Header */
-        .vd-header {
-          display: flex; flex-wrap: wrap;
-          align-items: flex-start; justify-content: space-between; gap: 1.5rem;
-          border-bottom: 1px solid var(--border);
-          padding-bottom: 2rem; margin-bottom: 2rem;
-        }
-        .vd-logo-row {
-          display: flex; align-items: center; gap: 10px;
-          font-family: 'Syne Mono', monospace;
-          font-size: 10px; letter-spacing: 0.32em;
-          color: var(--accent); text-transform: uppercase;
-          margin-bottom: 12px;
-        }
-        .vd-logo-sep { color: var(--muted); }
-        .vd-logo-dot {
-          width: 5px; height: 5px; border-radius: 50%;
-          background: var(--accent);
-          box-shadow: 0 0 8px var(--accent);
-          animation: dotPulse 1.4s ease-in-out infinite alternate;
-        }
-        .vd-tagline {
-          font-size: 13px; font-weight: 300; line-height: 1.7;
-          color: var(--muted); max-width: 480px; margin-bottom: 10px;
-        }
-        .vd-session-id {
-          font-family: 'Syne Mono', monospace;
-          font-size: 10px; color: var(--muted);
-          letter-spacing: 0.06em;
-        }
-        .vd-session-id span { color: var(--frost); }
-
-        /* Header buttons */
-        .vd-hdr-btns {
-          display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start;
-          font-family: 'Syne Mono', monospace;
-          font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
-        }
-        .vd-btn {
-          padding: 8px 18px; border-radius: 6px; cursor: pointer;
-          border: 1px solid; transition: all 0.18s ease;
-          font-family: 'Syne Mono', monospace;
-          font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
-          background: transparent;
-        }
-        .vd-btn-demo {
-          border-color: rgba(79,142,247,0.45);
-          background: rgba(79,142,247,0.1);
-          color: var(--accent);
-        }
-        .vd-btn-demo:hover:not(:disabled) { background: rgba(79,142,247,0.2); }
-        .vd-btn-demo:disabled { opacity: 0.4; cursor: not-allowed; }
-        .vd-btn-nav {
-          border-color: var(--border);
-          color: var(--frost);
-        }
-        .vd-btn-nav:hover { border-color: var(--accent); color: var(--accent); }
-        .vd-btn-reset {
-          border-color: rgba(240,91,91,0.3);
-          color: var(--deny);
-        }
-        .vd-btn-reset:hover { background: rgba(240,91,91,0.08); }
-
-        /* Step rail */
-        .vd-rail {
-          display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
-          border-bottom: 1px solid var(--border); padding-bottom: 1.2rem;
-          margin-bottom: 2rem;
-        }
-        .vd-rail-label {
-          font-family: 'Syne Mono', monospace;
-          font-size: 9px; letter-spacing: 0.28em;
-          text-transform: uppercase; color: var(--muted);
-        }
-        .vd-rail-steps {
-          display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-          list-style: none;
-        }
-        .vd-rail-step {
-          display: flex; align-items: center; gap: 8px;
-        }
-        .vd-rail-connector {
-          height: 1px; width: 28px; flex-shrink: 0;
-        }
-        .vd-step-pill {
-          display: flex; align-items: center; gap: 8px;
-          border: 1px solid; border-radius: 6px;
-          padding: 6px 12px;
-          font-family: 'Syne Mono', monospace; font-size: 10px;
-          transition: all 0.2s ease;
-        }
-        .vd-step-code { letter-spacing: 0.14em; font-size: 9px; }
-
-        /* Global banner */
-        .vd-banner {
-          display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-          border: 1px solid rgba(240,91,91,0.4);
-          background: rgba(240,91,91,0.08);
-          border-radius: 8px; padding: 12px 16px;
-          margin-bottom: 1.5rem;
-          font-family: 'Syne Mono', monospace; font-size: 12px;
-          color: var(--deny);
-        }
-        .vd-banner-dismiss {
-          background: none; border: none; cursor: pointer;
-          font-family: 'Syne Mono', monospace; font-size: 9px;
-          text-transform: uppercase; letter-spacing: 0.1em;
-          color: var(--txt); text-decoration: underline;
-          flex-shrink: 0;
-        }
-
-        /* Matrix workspace */
-        .vd-matrix-wrap { display: flex; flex-direction: column; gap: 2rem; }
-
-        .vd-bottom-card {
-          border: 1px solid var(--border);
-          border-radius: 12px;
-          background: rgba(13,21,37,0.85);
-          backdrop-filter: blur(8px);
-          overflow: hidden;
-        }
-        .vd-bottom-tabs {
-          display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-          border-bottom: 1px solid var(--border);
-          background: rgba(8,13,24,0.8);
-          padding: 10px 14px;
-        }
-        .vd-bottom-tab-label {
-          font-family: 'Syne Mono', monospace;
-          font-size: 9px; text-transform: uppercase; letter-spacing: 0.22em;
-          color: var(--muted); margin-right: 4px;
-        }
-        .vd-tab-group {
-          display: inline-flex; background: var(--navy);
-          border: 1px solid var(--border); border-radius: 8px; padding: 3px;
-        }
-        .vd-tab {
-          border-radius: 6px; padding: 7px 16px; cursor: pointer;
-          border: none; background: transparent;
-          font-family: 'Syne Mono', monospace;
-          font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
-          transition: all 0.15s ease;
-        }
-        .vd-tab-active { background: var(--accent); color: #fff; }
-        .vd-tab-inactive { color: var(--muted); }
-        .vd-tab-inactive:hover { color: var(--txt); }
-        .vd-bottom-body { padding: 20px; }
-
-        /* Legend */
-        .vd-legend {
-          display: grid; gap: 10px;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          font-family: 'Syne Mono', monospace; font-size: 10px; color: var(--muted);
-        }
-        .vd-legend-item {
-          display: flex; align-items: center; gap: 10px;
-          border: 1px solid var(--border); border-radius: 7px;
-          background: var(--navy); padding: 10px 12px;
-        }
-        .vd-legend-dot {
-          width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-        }
-        .vd-legend-note {
-          grid-column: 1 / -1;
-          border: 1px dashed rgba(79,142,247,0.3);
-          background: rgba(79,142,247,0.05);
-          border-radius: 7px; padding: 10px 12px;
-          color: var(--accent); font-size: 10px;
-          font-family: 'Syne Mono', monospace;
-        }
-
-        /* Footer */
-        .vd-footer {
-          margin-top: 4rem; border-top: 1px solid var(--border);
-          padding-top: 1.5rem;
-          font-family: 'Syne Mono', monospace;
-          font-size: 9px; text-transform: uppercase;
-          letter-spacing: 0.2em; color: var(--muted);
-          display: flex; align-items: center; gap: 10px;
-        }
-        .vd-footer::before {
-          content: '';
-          display: inline-block; width: 4px; height: 4px;
-          border-radius: 50%; background: var(--deny);
-          box-shadow: 0 0 6px var(--deny);
-        }
-      `}</style>
     </div>
   );
 }
 
-/* ── Step Rail ─────────────────────────────────────────────────────────────── */
-const STEPS: { id: WizardStep; label: string; code: string }[] = [
-  { id: "upload",   label: "Intake",              code: "P01" },
-  { id: "criteria", label: "Interpretation Gate", code: "P02" },
-  { id: "matrix",   label: "Adjudication Lattice",code: "P03" },
-];
-
+/* ── Step rail (sidebar) ─────────────────────────────────────────── */
 function StepRail() {
   const { step } = useWizard();
   const stepIndex = STEPS.findIndex((x) => x.id === step);
 
   return (
-    <nav className="vd-rail">
-      <p className="vd-rail-label">Protocol</p>
-      <ol className="vd-rail-steps">
+    <nav aria-label="Workflow steps">
+      <p
+        style={{
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.22em",
+          color: "var(--txt)",
+          marginBottom: 14,
+          paddingLeft: 4,
+        }}
+      >
+        Flow
+      </p>
+      <ol style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 0 }}>
         {STEPS.map((s, i) => {
-          const active    = s.id === step;
+          const active = s.id === step;
           const completed = i < stepIndex;
+          const Icon = STEP_ICONS[i];
           return (
-            <li key={s.id} className="vd-rail-step">
-              {i > 0 && (
-                <span
-                  className="vd-rail-connector"
-                  style={{ background: completed || active ? "rgba(79,142,247,0.4)" : "var(--border)" }}
-                  aria-hidden
-                />
-              )}
+            <li key={s.id}>
               <div
-                className="vd-step-pill"
-                style={
-                  active
-                    ? { borderColor: "rgba(79,142,247,0.55)", background: "rgba(79,142,247,0.12)", color: "var(--accent)" }
-                    : completed
-                    ? { borderColor: "rgba(34,212,143,0.35)", background: "rgba(34,212,143,0.08)", color: "var(--eligible)" }
-                    : { borderColor: "var(--border)", background: "var(--panel)", color: "var(--muted)" }
-                }
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 4px",
+                  borderBottom: "1px solid var(--border-soft)",
+                  background: active ? "var(--zebra)" : "transparent",
+                  borderLeft: active ? "4px solid var(--txt)" : "4px solid transparent",
+                  marginLeft: -4,
+                  paddingLeft: 8,
+                  transition: "background 160ms ease, border-color 160ms ease",
+                  cursor: "default",
+                }}
               >
-                <span className="vd-step-code">{s.code}</span>
-                <span>{s.label}</span>
+                <span
+                  style={{
+                    width: 36,
+                    height: 36,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    border: `2px solid ${active ? "var(--txt)" : completed ? "var(--eligible)" : "var(--border-soft)"}`,
+                    color: active ? "var(--txt)" : completed ? "var(--eligible)" : "var(--muted)",
+                    transition: "all 160ms ease",
+                  }}
+                >
+                  <Icon />
+                </span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <p
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: "0.12em",
+                      color: "var(--muted)",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {s.code}
+                  </p>
+                  <p
+                    className="font-display"
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      letterSpacing: "-0.02em",
+                      color: active ? "var(--txt)" : completed ? "var(--txt-2)" : "var(--muted)",
+                      marginTop: 4,
+                      lineHeight: 1.15,
+                    }}
+                  >
+                    {s.label}
+                  </p>
+                </div>
               </div>
             </li>
           );
@@ -355,29 +201,43 @@ function StepRail() {
   );
 }
 
-/* ── Global Banner ─────────────────────────────────────────────────────────── */
+/* ── Global banner ───────────────────────────────────────────────── */
 function GlobalBanner() {
   const { globalError, setGlobalError } = useWizard();
   if (!globalError) return null;
   return (
-    <div className="vd-banner">
+    <div style={{
+      display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12,
+      background: "rgba(196,30,30,0.06)", border: "2px solid rgba(196,30,30,0.35)",
+      borderRadius: 0, padding: "14px 18px", marginBottom: 20,
+      fontSize: 13, color: "var(--txt)",
+    }}>
       <span>{globalError}</span>
-      <button type="button" onClick={() => setGlobalError(null)} className="vd-banner-dismiss">
+      <button
+        type="button"
+        onClick={() => setGlobalError(null)}
+        style={{
+          flexShrink: 0, background: "none", border: "1px solid var(--border)",
+          borderRadius: 0, padding: "6px 14px", fontSize: 11, cursor: "pointer",
+          color: "var(--muted)", fontFamily: "var(--font-mono)", fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: "0.08em",
+        }}
+      >
         Dismiss
       </button>
     </div>
   );
 }
 
-/* ── Matrix Workspace ──────────────────────────────────────────────────────── */
+/* ── Matrix workspace ────────────────────────────────────────────── */
 function MatrixWorkspace() {
   const { criteria } = useWizard();
-  const [bottomTab, setBottomTab]       = useState<"legend" | "anomalies">("anomalies");
+  const [bottomTab, setBottomTab]           = useState<"legend" | "anomalies">("anomalies");
   const [drawerDecision, setDrawerDecision] = useState<VerdictDecision | null>(null);
-  const idToCrit = useMemo(() => Object.fromEntries(criteria.map((c) => [c.id, c])), [criteria]);
+  const idToCrit = Object.fromEntries(criteria.map((c) => [c.id, c]));
 
   return (
-    <div className="vd-matrix-wrap">
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <BidderMatrix onOpenEvidence={(d) => setDrawerDecision(d)} />
       <EvidenceDrawer
         open={Boolean(drawerDecision)}
@@ -386,27 +246,33 @@ function MatrixWorkspace() {
         criterionTitle={drawerDecision ? idToCrit[drawerDecision.criterion_id]?.description ?? "" : ""}
       />
 
-      <div className="vd-bottom-card">
-        <div className="vd-bottom-tabs">
-          <span className="vd-bottom-tab-label">Supporting intelligence</span>
-          <div className="vd-tab-group">
-            <button
-              type="button"
-              onClick={() => setBottomTab("legend")}
-              className={`vd-tab ${bottomTab === "legend" ? "vd-tab-active" : "vd-tab-inactive"}`}
-            >
-              Lattice legend
-            </button>
-            <button
-              type="button"
-              onClick={() => setBottomTab("anomalies")}
-              className={`vd-tab ${bottomTab === "anomalies" ? "vd-tab-active" : "vd-tab-inactive"}`}
-            >
-              Integrity anomalies
-            </button>
+      {/* Bottom intel panel */}
+      <div style={{ background: "var(--surface)", border: "2px solid var(--txt)", borderRadius: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "14px 18px", borderBottom: "2px solid var(--txt)", background: "var(--bg)" }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--txt)", marginRight: 4 }}>
+            Intelligence
+          </span>
+          <div style={{ display: "inline-flex", border: "2px solid var(--txt)", gap: 0 }}>
+            {(["legend", "anomalies"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setBottomTab(tab)}
+                style={{
+                  padding: "8px 16px", border: "none", borderRight: tab === "legend" ? "2px solid var(--txt)" : "none", cursor: "pointer",
+                  fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: "0.14em",
+                  background: bottomTab === tab ? "var(--txt)" : "transparent",
+                  color: bottomTab === tab ? "#fff" : "var(--muted)",
+                  transition: "all 160ms ease",
+                }}
+              >
+                {tab === "legend" ? "Legend" : "Anomalies"}
+              </button>
+            ))}
           </div>
         </div>
-        <div className="vd-bottom-body">
+        <div style={{ padding: "20px 20px" }}>
           {bottomTab === "legend" ? <LatticeLegend /> : <AnomalyPanel />}
         </div>
       </div>
@@ -415,28 +281,118 @@ function MatrixWorkspace() {
 }
 
 function LatticeLegend() {
+  const items = [
+    { color: "var(--eligible)", label: "Eligible", desc: "Criterion satisfied within confidence envelope." },
+    { color: "var(--deny)",     label: "Not eligible", desc: "Hard fail or threshold breach logged." },
+    { color: "var(--review)",   label: "Needs review", desc: "Evidence insufficient or contradictory." },
+  ];
   return (
-    <div className="vd-legend">
-      <div className="vd-legend-item">
-        <span className="vd-legend-dot" style={{ background: "var(--eligible)", boxShadow: "0 0 8px rgba(34,212,143,0.5)" }} />
-        Eligible — criterion satisfied within confidence envelope.
+    <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))" }}>
+      {items.map((item) => (
+        <div key={item.label} style={{
+          display: "flex", alignItems: "flex-start", gap: 12,
+          border: "1px solid var(--border-soft)", borderRadius: 0,
+          background: "var(--bg)", padding: "14px 16px",
+        }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: item.color, flexShrink: 0, marginTop: 3 }} />
+          <div>
+            <p className="font-display" style={{ fontSize: 13, fontWeight: 700, color: "var(--txt)", marginBottom: 4 }}>{item.label}</p>
+            <p style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)", lineHeight: 1.5 }}>{item.desc}</p>
+          </div>
+        </div>
+      ))}
+      <div style={{
+        gridColumn: "1 / -1",
+        border: "2px dashed var(--border-soft)", borderRadius: 0,
+        background: "var(--bg)", padding: "12px 16px",
+        fontSize: 11, color: "var(--txt-2)", fontFamily: "var(--font-mono)", lineHeight: 1.55,
+      }}>
+        Select any lattice intersection to inspect provenance chain, OCR-weighted confidence, and deterministic reasoning.
       </div>
-      <div className="vd-legend-item">
-        <span className="vd-legend-dot" style={{ background: "var(--deny)", boxShadow: "0 0 8px rgba(240,91,91,0.5)" }} />
-        Not eligible — hard fail or threshold breach logged.
-      </div>
-      <div className="vd-legend-item">
-        <span className="vd-legend-dot" style={{ background: "var(--review)", boxShadow: "0 0 8px rgba(244,161,74,0.5)" }} />
-        Needs manual review — evidence insufficient or contradictory.
-      </div>
-      <p className="vd-legend-note">
-        Select any lattice intersection to inspect provenance chain, OCR-weighted confidence, and deterministic reasoning text.
-      </p>
     </div>
   );
 }
 
-/* ── Wizard Body ───────────────────────────────────────────────────────────── */
+/* ── Hero section below upload ───────────────────────────────────── */
+function HeroSection() {
+  const stats = [
+    { label: "Processing time", value: "< 30 min", sub: "vs 4–6 days manual" },
+    { label: "Criteria extracted", value: "Auto", sub: "from legal language" },
+    { label: "Audit trail", value: "SHA-256", sub: "tamper-evident chain" },
+    { label: "Bidder anomalies", value: "Cross-check", sub: "IQR outlier detection" },
+  ];
+  return (
+    <div style={{ marginTop: 56, paddingTop: 48, borderTop: "2px solid var(--txt)" }}>
+      <p
+        className="font-display"
+        style={{
+          fontSize: "clamp(1.75rem, 3vw, 2.25rem)",
+          fontWeight: 800,
+          letterSpacing: "-0.04em",
+          color: "var(--txt)",
+          marginBottom: 8,
+          lineHeight: 1.05,
+        }}
+      >
+        Why teams use it
+      </p>
+      <p style={{ fontSize: 14, color: "var(--muted)", maxWidth: 520, marginBottom: 28, lineHeight: 1.55 }}>
+        Procurement-grade traceability: one surface, no decorative chrome.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 16, marginBottom: 0 }}>
+        {stats.map((s) => (
+          <div
+            key={s.label}
+            style={{
+              background: "var(--bg)",
+              border: "2px solid var(--txt)",
+              padding: "22px 20px",
+            }}
+          >
+            <p className="font-display" style={{ fontSize: "clamp(1.5rem, 2.5vw, 2rem)", fontWeight: 800, color: "var(--txt)", letterSpacing: "-0.03em" }}>{s.value}</p>
+            <p style={{ fontSize: 12, fontWeight: 600, color: "var(--txt)", marginTop: 8, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.12em" }}>{s.label}</p>
+            <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, lineHeight: 1.5 }}>{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: 20, marginTop: 32 }}>
+        {[
+          {
+            title: "Evidence, not opinion",
+            desc: "Each verdict ties to a document, page, and excerpt. Nothing disappears into a black box.",
+            mark: "I",
+          },
+          {
+            title: "Cross-bidder pressure",
+            desc: "All bidders in one lattice so outliers and inconsistencies surface in context.",
+            mark: "II",
+          },
+          {
+            title: "Ambiguity before math",
+            desc: "Unclear criteria are resolved explicitly before any scoring runs.",
+            mark: "III",
+          },
+        ].map((f) => (
+          <div
+            key={f.title}
+            style={{
+              padding: "28px 24px",
+              minHeight: 200,
+              border: "2px solid var(--txt)",
+            }}
+          >
+            <span className="font-display" style={{ fontSize: 48, fontWeight: 800, color: "var(--border-soft)", lineHeight: 1, display: "block", marginBottom: 12 }}>{f.mark}</span>
+            <p className="font-display" style={{ fontSize: 17, fontWeight: 700, color: "var(--txt)", marginBottom: 10, letterSpacing: "-0.02em" }}>{f.title}</p>
+            <p style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.65 }}>{f.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Wizard body ─────────────────────────────────────────────────── */
 function WizardBody() {
   const {
     step, setStep, sessionId, resetWizard,
@@ -449,93 +405,172 @@ function WizardBody() {
     mutationFn: loadDemoSeed,
     onMutate: () => setGlobalError(null),
     onSuccess: (data: DemoSeedResponse) => {
-      applyDemoHydrate({
-        data, setTenderSession, setBidderRows, setBidderIdsOrdered,
-        setCriteria, setCriteriaAmbiguousInitially,
-        setDecisionsByBidder, setAnomalies, clearAnomalyReviews, setStep,
-      });
+      applyDemoHydrate({ data, setTenderSession, setBidderRows, setBidderIdsOrdered, setCriteria, setCriteriaAmbiguousInitially, setDecisionsByBidder, setAnomalies, clearAnomalyReviews, setStep });
     },
     onError: (e: unknown) => setGlobalError(formatApiError(e)),
   });
 
   return (
-    <div className="vd-shell">
-      <div className="vd-inner">
-        {/* Header */}
-        <header className="vd-header">
-          <div>
-            <div className="vd-logo-row">
-              <span className="vd-logo-dot" />
-              <span>Veridict</span>
-              <span className="vd-logo-sep">/</span>
-              <span style={{ color: "var(--muted)" }}>Tender adjudication workstation</span>
-            </div>
-            <p className="vd-tagline">
-              Deterministic ingestion, criteria arbitration, lattice-grade bid evaluation.
-              Controlled chain of custody across document ingestion and adjudication artefacts.
-            </p>
-            {sessionId && (
-              <p className="vd-session-id">
-                Session:&nbsp;<span>{sessionId}</span>
-              </p>
-            )}
-          </div>
+    <div style={{ display: "flex", minHeight: "100vh", maxWidth: 1480, margin: "0 auto" }}>
 
-          <div className="vd-hdr-btns">
-            <button
-              type="button"
-              disabled={demoMutation.isPending}
-              onClick={() => demoMutation.mutate()}
-              className="vd-btn vd-btn-demo"
+      <aside style={{
+        width: 248, flexShrink: 0, background: "var(--bg)",
+        borderRight: "2px solid var(--txt)",
+        display: "flex", flexDirection: "column",
+        padding: "32px 20px",
+        position: "sticky", top: 0, height: "100vh", overflowY: "auto",
+      }}>
+        <div style={{ marginBottom: 36, paddingLeft: 4 }}>
+          <div style={{ marginBottom: 12 }}>
+            <span
+              className="font-display"
+              style={{
+                fontSize: 22,
+                fontWeight: 800,
+                letterSpacing: "0.02em",
+                color: "var(--txt)",
+                display: "block",
+                lineHeight: 1,
+              }}
             >
-              {demoMutation.isPending ? "Loading demo…" : "Load Demo"}
+              Veridict
+            </span>
+            <span
+              style={{
+                display: "inline-block",
+                marginTop: 8,
+                height: 4,
+                width: "100%",
+                maxWidth: 120,
+                background: "var(--txt)",
+              }}
+              aria-hidden
+            />
+          </div>
+          <p style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", lineHeight: 1.5, letterSpacing: "0.01em" }}>
+            Tender adjudication surface
+          </p>
+        </div>
+
+        <StepRail />
+
+        {/* Bottom controls */}
+        <div style={{ marginTop: "auto", paddingTop: 28, borderTop: "2px solid var(--txt)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <button
+            type="button"
+            disabled={demoMutation.isPending}
+            onClick={() => demoMutation.mutate()}
+            style={{
+              width: "100%", padding: "12px 16px", borderRadius: 0, cursor: demoMutation.isPending ? "wait" : "pointer",
+              border: "2px solid var(--txt)", background: "var(--txt)", color: "#fff",
+              fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase",
+              transition: "opacity 160ms ease, transform 160ms ease",
+            }}
+            onMouseEnter={(e) => { if (!demoMutation.isPending) (e.currentTarget as HTMLElement).style.opacity = "0.88"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+          >
+            {demoMutation.isPending ? "Loading…" : "Load demo"}
+          </button>
+          {step === "criteria" && (
+            <button type="button" onClick={() => setStep("upload")} style={{ width: "100%", padding: "10px 16px", borderRadius: 0, cursor: "pointer", border: "2px solid var(--border-soft)", background: "transparent", color: "var(--txt)", fontSize: 12, fontWeight: 600, transition: "all 160ms ease" }}>
+              ← Intake
             </button>
-            {step === "criteria" && (
-              <button type="button" onClick={() => setStep("upload")} className="vd-btn vd-btn-nav">
-                ← Intake
-              </button>
-            )}
-            {step === "matrix" && (
-              <button type="button" onClick={() => setStep("criteria")} className="vd-btn vd-btn-nav">
-                ← Arbitration
-              </button>
-            )}
-            <button type="button" onClick={() => resetWizard()} className="vd-btn vd-btn-reset">
-              New session
+          )}
+          {step === "matrix" && (
+            <button type="button" onClick={() => setStep("criteria")} style={{ width: "100%", padding: "10px 16px", borderRadius: 0, cursor: "pointer", border: "2px solid var(--border-soft)", background: "transparent", color: "var(--txt)", fontSize: 12, fontWeight: 600, transition: "all 160ms ease" }}>
+              ← Criteria
             </button>
+          )}
+          <button
+            type="button"
+            onClick={() => resetWizard()}
+            style={{ width: "100%", padding: "10px 16px", borderRadius: 0, cursor: "pointer", border: "2px solid rgba(196,30,30,0.45)", background: "transparent", color: "var(--deny)", fontSize: 12, fontWeight: 600, transition: "all 160ms ease" }}
+          >
+            New session
+          </button>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", padding: "36px 40px", overflowY: "auto" }}>
+
+        <header style={{ marginBottom: 32, paddingBottom: 24, borderBottom: "2px solid var(--txt)" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 20 }}>
+            <div>
+              <p
+                className="font-display"
+                style={{
+                  fontSize: "clamp(2rem, 4vw, 2.75rem)",
+                  fontWeight: 800,
+                  letterSpacing: "-0.04em",
+                  color: "var(--txt)",
+                  lineHeight: 1.02,
+                  marginBottom: 10,
+                }}
+              >
+                Session
+              </p>
+              {sessionId ? (
+                <p style={{ fontSize: 14, marginTop: 0, color: "var(--txt)" }}>
+                  <span style={{
+                    border: "2px solid var(--txt)",
+                    padding: "6px 12px",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    letterSpacing: "0.04em",
+                    display: "inline-block",
+                  }}>{sessionId}</span>
+                </p>
+              ) : (
+                <p style={{ fontSize: 14, color: "var(--muted)", maxWidth: 420, lineHeight: 1.55 }}>
+                  No active session. Start from Intake or load the demo.
+                </p>
+              )}
+            </div>
           </div>
         </header>
 
-        <StepRail />
         <GlobalBanner />
 
-        <main>
-          {step === "upload"   && <Upload />}
-          {step === "criteria" && <CriteriaReview />}
-          {step === "matrix"   && <MatrixWorkspace />}
+        <main style={{ flex: 1 }}>
+          <div key={step} className="animate-step-enter">
+            {step === "upload"   && <><Upload /><HeroSection /></>}
+            {step === "criteria" && <CriteriaReview />}
+            {step === "matrix"   && <MatrixWorkspace />}
+          </div>
         </main>
 
-        <footer className="vd-footer">
-          Internal adjudication conduit — unauthorised disclosure prohibited
+        <footer style={{ marginTop: 56, paddingTop: 24, borderTop: "2px solid var(--txt)", fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em", color: "var(--muted)" }}>
+          Internal adjudication — unauthorised disclosure prohibited.
         </footer>
       </div>
     </div>
   );
 }
 
-/* ── Root ──────────────────────────────────────────────────────────────────── */
-export default function App() {
+/* ── Splash wrapper ──────────────────────────────────────────────── */
+function WizardShell() {
   const [splashDone, setSplashDone] = useState(false);
+  return (
+    <>
+      {!splashDone && <SplashOverlay onComplete={() => setSplashDone(true)} />}
+      <div style={{ opacity: splashDone ? 1 : 0, transition: "opacity 0.4s ease", animation: splashDone ? "appEnter 0.5s cubic-bezier(0.22,1,0.36,1) forwards" : "none" }}>
+        <WizardBody />
+      </div>
+    </>
+  );
+}
 
+export default function App() {
   return (
     <WizardProvider>
-      {!splashDone && <SplashScreen onDone={() => setSplashDone(true)} />}
-      <WizardBody />
+      <WizardShell />
     </WizardProvider>
   );
 }
 
-/* ── Demo hydrate helper (unchanged) ──────────────────────────────────────── */
+/* ── Demo hydrate (unchanged) ────────────────────────────────────── */
 function applyDemoHydrate(args: {
   data: DemoSeedResponse;
   setTenderSession: WizardContextValue["setTenderSession"];
@@ -548,19 +583,10 @@ function applyDemoHydrate(args: {
   clearAnomalyReviews: WizardContextValue["clearAnomalyReviews"];
   setStep: WizardContextValue["setStep"];
 }) {
-  const {
-    data, setTenderSession, setBidderRows, setBidderIdsOrdered,
-    setCriteria, setCriteriaAmbiguousInitially,
-    setDecisionsByBidder, setAnomalies, clearAnomalyReviews, setStep,
-  } = args;
+  const { data, setTenderSession, setBidderRows, setBidderIdsOrdered, setCriteria, setCriteriaAmbiguousInitially, setDecisionsByBidder, setAnomalies, clearAnomalyReviews, setStep } = args;
   setBidderRows([]);
   clearAnomalyReviews();
-  setTenderSession({
-    sessionId: data.session_id,
-    tenderId: data.tender_id,
-    blockCount: data.tender_block_count,
-    pages: data.tender_pages,
-  });
+  setTenderSession({ sessionId: data.session_id, tenderId: data.tender_id, blockCount: data.tender_block_count, pages: data.tender_pages });
   setCriteriaAmbiguousInitially(data.ambiguous_initially);
   setBidderIdsOrdered(data.bidder_ids_ordered);
   setCriteria(data.criteria);

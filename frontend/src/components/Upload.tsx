@@ -3,53 +3,46 @@ import { useCallback, useRef, useState } from "react";
 import { extractCriteria, formatApiError, uploadBidder, uploadTender } from "../api";
 import { newRowId, useWizard, type BidderFileRow } from "../context/WizardContext";
 
-function DropZone({
-  label,
-  subtitle,
-  accept,
-  multiple,
-  filesSummary,
-  onDropFiles,
-}: {
-  label: string;
-  subtitle: string;
-  accept: string;
-  multiple?: boolean;
-  filesSummary?: string;
+function DropZone({ label, subtitle, accept, multiple, filesSummary, onDropFiles }: {
+  label: string; subtitle: string; accept: string;
+  multiple?: boolean; filesSummary?: string;
   onDropFiles: (files: File[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [drag, setDrag] = useState(false);
+  const [drag, setDrag]   = useState(false);
+  const [hover, setHover] = useState(false);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDrag(false);
-      const list = [...e.dataTransfer.files];
-      if (list.length) onDropFiles(list);
-    },
-    [onDropFiles],
-  );
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); setDrag(false);
+    const list = [...e.dataTransfer.files];
+    if (list.length) onDropFiles(list);
+  }, [onDropFiles]);
+
+  const active = drag || hover;
 
   return (
     <div
-      onDragEnter={(e) => {
-        e.preventDefault();
-        setDrag(true);
-      }}
+      onDragEnter={(e) => { e.preventDefault(); setDrag(true); }}
       onDragOver={(e) => e.preventDefault()}
       onDragLeave={() => setDrag(false)}
       onDrop={handleDrop}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       onClick={() => inputRef.current?.click()}
-      className={`relative cursor-pointer rounded-xl border border-dashed p-6 transition-colors ${
-        drag ? "border-accent bg-accent/10" : "border-line bg-panel/80 hover:border-frost/30"
-      } shadow-hud`}
+      style={{
+        position: "relative", cursor: "pointer", borderRadius: 0,
+        border: `2px dashed ${active ? "var(--txt)" : "var(--border-soft)"}`,
+        padding: "36px 24px", textAlign: "center",
+        background: active ? "var(--zebra)" : "var(--bg)",
+        transition: "all 160ms ease",
+        boxShadow: active ? "inset 0 0 0 2px var(--txt)" : "none",
+      }}
     >
       <input
         ref={inputRef}
         type="file"
         accept={accept}
-        className="sr-only"
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0 }}
         multiple={Boolean(multiple)}
         onChange={(e) => {
           const list = e.target.files ? [...e.target.files] : [];
@@ -57,28 +50,33 @@ function DropZone({
           e.target.value = "";
         }}
       />
-      <div className="pointer-events-none text-center">
-        <p className="font-mono text-[11px] uppercase tracking-widest text-accent">{label}</p>
-        <p className="mt-2 text-sm text-frost">{subtitle}</p>
-        {filesSummary && <p className="mt-3 font-mono text-xs text-muted">{filesSummary}</p>}
+      <div style={{
+        width: 44, height: 44, borderRadius: 0,
+        border: `2px solid ${active ? "var(--txt)" : "var(--border-soft)"}`,
+        background: "var(--bg)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        margin: "0 auto 14px", transition: "all 160ms ease",
+      }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "var(--txt)" : "var(--muted)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 4v12M12 4l4 4M12 4l-4 4M5 20h14" />
+        </svg>
       </div>
+      <p style={{ fontSize: 13, fontWeight: 600, color: active ? "var(--txt)" : "var(--txt-2)", marginBottom: 4 }}>{label}</p>
+      <p style={{ fontSize: 11, color: "var(--muted)" }}>{subtitle}</p>
+      {filesSummary && (
+        <p style={{ marginTop: 8, fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--eligible)", border: "2px solid var(--eligible)", borderRadius: 0, display: "inline-block", padding: "4px 10px" }}>
+          ✓ {filesSummary}
+        </p>
+      )}
     </div>
   );
 }
 
 export function Upload() {
   const {
-    sessionId,
-    setTenderSession,
-    tenderStats,
-    tenderId,
-    bidderRows,
-    setBidderRows,
-    setBidderIdsOrdered,
-    setCriteria,
-    setCriteriaAmbiguousInitially,
-    setStep,
-    setGlobalError,
+    sessionId, setTenderSession, tenderStats, tenderId,
+    bidderRows, setBidderRows, setBidderIdsOrdered,
+    setCriteria, setCriteriaAmbiguousInitially, setStep, setGlobalError,
   } = useWizard();
 
   const [tenderFile, setTenderFile] = useState<File | null>(null);
@@ -88,29 +86,17 @@ export function Upload() {
       if (!tenderFile) throw new Error("Select the tender package.");
       if (bidderRows.length === 0 || bidderRows.some((r) => !r.file || !r.bidderName.trim()))
         throw new Error("Every bidder row needs a document and bidder name.");
-
       setGlobalError(null);
       const t = await uploadTender(tenderFile);
-      setTenderSession({
-        sessionId: t.session_id,
-        tenderId: t.tender_id,
-        blockCount: t.block_count,
-        pages: t.pages,
-      });
-
+      setTenderSession({ sessionId: t.session_id, tenderId: t.tender_id, blockCount: t.block_count, pages: t.pages });
       const ordered: string[] = [];
       for (const row of bidderRows) {
         const file = row.file;
         if (!file) throw new Error("Incomplete bidder attachment.");
-        const resp = await uploadBidder({
-          file,
-          sessionId: t.session_id,
-          bidderName: row.bidderName.trim(),
-        });
+        const resp = await uploadBidder({ file, sessionId: t.session_id, bidderName: row.bidderName.trim() });
         ordered.push(resp.bidder_id);
       }
       setBidderIdsOrdered(ordered);
-
       const crit = await extractCriteria(t.session_id);
       setCriteriaAmbiguousInitially(crit.ambiguous_count);
       setCriteria(crit.criteria);
@@ -119,26 +105,10 @@ export function Upload() {
     onError: (err: unknown) => setGlobalError(formatApiError(err)),
   });
 
-  function addBidderRow() {
-    setBidderRows((prev) => [...prev, { id: newRowId(), file: null, bidderName: "" }]);
-  }
-
-  function setRowFile(rowId: string, file: File) {
-    setBidderRows((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, file } : r)),
-    );
-  }
-
-  function setRowName(rowId: string, bidderName: string) {
-    setBidderRows((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, bidderName } : r)),
-    );
-  }
-
-  function removeRow(rowId: string) {
-    setBidderRows((prev) => prev.filter((r) => r.id !== rowId));
-  }
-
+  function addBidderRow() { setBidderRows((prev) => [...prev, { id: newRowId(), file: null, bidderName: "" }]); }
+  function setRowFile(id: string, file: File) { setBidderRows((prev) => prev.map((r) => r.id === id ? { ...r, file } : r)); }
+  function setRowName(id: string, name: string) { setBidderRows((prev) => prev.map((r) => r.id === id ? { ...r, bidderName: name } : r)); }
+  function removeRow(id: string) { setBidderRows((prev) => prev.filter((r) => r.id !== id)); }
   function onBidderFilesDropped(files: File[]) {
     setBidderRows((prev) => {
       let next = [...prev];
@@ -151,94 +121,102 @@ export function Upload() {
     });
   }
 
-  const canExtract =
-    Boolean(tenderFile) &&
-    bidderRows.length > 0 &&
-    bidderRows.every((r) => r.file && r.bidderName.trim());
+  const canExtract = Boolean(tenderFile) && bidderRows.length > 0 && bidderRows.every((r) => r.file && r.bidderName.trim());
 
   return (
-    <div className="animate-fade-slide space-y-8">
-      <header className="border-b border-line pb-6">
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent">Phase 01 — Ingest</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-txt">Classified Procurement Intake</h1>
-        <p className="mt-2 max-w-3xl text-sm text-muted">
-          Upload the tender dossier once, attach each bidder filing with an explicit bidder identifier. Verification chain starts at document boundary.
+    <div>
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", color: "var(--txt)", border: "2px solid var(--txt)", padding: "4px 10px" }}>01</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--muted)" }}>Intake</span>
+        </div>
+        <h1 className="font-display" style={{ fontSize: "clamp(1.85rem, 3.2vw, 2.5rem)", fontWeight: 800, color: "var(--txt)", letterSpacing: "-0.04em", marginBottom: 8, lineHeight: 1.05 }}>Document intake</h1>
+        <p style={{ fontSize: 14, color: "var(--muted)", maxWidth: 520, lineHeight: 1.55 }}>
+          Tender package plus each bidder filing, named explicitly. Traceability starts at the file boundary.
         </p>
-      </header>
+      </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <DropZone
-          label="Tender dossier"
-          subtitle="PDF or DOCX — single canonical package."
-          accept=".pdf,.doc,.docx,application/pdf"
-          multiple={false}
-          filesSummary={
-            tenderFile
-              ? `${tenderFile.name} · ready`
-              : sessionId && tenderId
-                ? `Session ${sessionId.slice(0, 8)}… (${tenderStats?.pages ?? "?"} pg)`
-                : undefined
-          }
-          onDropFiles={(files) => {
-            const f = files.find((x) => /pdf|document|word/i.test(x.type) || /\.pdf$/i.test(x.name));
-            if (f) setTenderFile(f);
-          }}
-        />
+      {/* Upload grid */}
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(300px,1fr))", marginBottom: 28 }}>
 
-        <div className="space-y-3 rounded-xl border border-line bg-surface p-5 shadow-hud">
-          <div className="flex items-center justify-between">
-            <p className="font-mono text-[11px] uppercase tracking-widest text-review">Bidder filings</p>
+        {/* Tender */}
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 500, color: "var(--frost)", marginBottom: 8, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.12em" }}>Tender Dossier</p>
+          <DropZone
+            label="Drop tender document"
+            subtitle="PDF or DOCX — single canonical package"
+            accept=".pdf,.doc,.docx,application/pdf"
+            multiple={false}
+            filesSummary={tenderFile ? `${tenderFile.name} · ready` : sessionId && tenderId ? `Session ${sessionId.slice(0,8)}… · ${tenderStats?.pages ?? "?"} pages` : undefined}
+            onDropFiles={(files) => {
+              const f = files.find((x) => /pdf|document|word/i.test(x.type) || /\.pdf$/i.test(x.name));
+              if (f) setTenderFile(f);
+            }}
+          />
+        </div>
+
+        {/* Bidder panel */}
+        <div style={{ background: "var(--surface)", border: "2px solid var(--txt)", borderRadius: 0, padding: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: "var(--txt)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.14em" }}>Bidders</p>
             <button
               type="button"
               onClick={addBidderRow}
-              className="rounded border border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-frost hover:border-accent hover:text-accent"
+              style={{
+                padding: "8px 14px", borderRadius: 0, cursor: "pointer",
+                border: "2px solid var(--txt)", background: "var(--bg)",
+                color: "var(--txt)", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: "0.08em", textTransform: "uppercase", transition: "all 160ms ease",
+              }}
             >
               + Row
             </button>
           </div>
+
           <DropZone
             label="Bidder uploads"
-            subtitle="Multiple files accepted — merges into rows below."
+            subtitle="Multiple files — merges into rows below"
             accept=".pdf,.doc,.docx"
             multiple
-            filesSummary={`${bidderRows.filter((r) => r.file).length}/${bidderRows.length} files bound`}
+            filesSummary={`${bidderRows.filter((r) => r.file).length} / ${bidderRows.length} files bound`}
             onDropFiles={onBidderFilesDropped}
           />
 
-          <div className="max-h-64 space-y-2 overflow-auto scrollbar-thin pr-1">
+          <div style={{ marginTop: 12, maxHeight: 240, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }} className="scrollbar-thin">
             {bidderRows.length === 0 && (
-              <p className="py-6 text-center font-mono text-xs text-muted">No bidder rows — drop files or add a row.</p>
+              <p style={{ textAlign: "center", fontSize: 11, color: "var(--muted)", padding: "20px 0", fontFamily: "var(--font-mono)" }}>
+                No bidder rows — drop files or add a row.
+              </p>
             )}
-            {bidderRows.map((row: BidderFileRow) => (
-              <div key={row.id} className="flex flex-wrap items-end gap-2 rounded-lg border border-line bg-panel px-3 py-2">
-                <label className="min-w-[140px] flex-1 text-[11px] text-muted">
-                  <span className="font-mono uppercase tracking-wide text-frost">Bidder id / name</span>
+            {bidderRows.map((row: BidderFileRow, idx) => (
+              <div key={row.id} style={{
+                display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 8,
+                padding: "12px 14px", borderRadius: 0, border: "1px solid var(--border-soft)",
+                background: idx % 2 === 0 ? "var(--zebra)" : "var(--surface)",
+              }}>
+                <label style={{ flex: 1, minWidth: 130 }}>
+                  <span style={{ display: "block", fontSize: 10, fontWeight: 500, color: "var(--muted)", marginBottom: 4, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Bidder name</span>
+                  <input value={row.bidderName} onChange={(e) => setRowName(row.id, e.target.value)} placeholder="Registered entity name" />
+                </label>
+                <label>
+                  <span style={{ display: "block", fontSize: 10, fontWeight: 500, color: "var(--muted)", marginBottom: 4, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Document</span>
                   <input
-                    value={row.bidderName}
-                    onChange={(e) => setRowName(row.id, e.target.value)}
-                    placeholder="Registered entity name"
-                    className="mt-1 w-full rounded border border-line bg-navy px-2 py-1.5 font-sans text-sm text-txt placeholder:text-muted focus:border-accent focus:outline-none"
+                    type="file" accept=".pdf,.doc,.docx"
+                    style={{ fontSize: 11, color: "var(--muted)", width: "auto", background: "none", border: "none", padding: 0 }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) setRowFile(row.id, f); }}
                   />
                 </label>
-                <label className="font-mono text-[10px] text-muted">
-                  <span className="block uppercase tracking-wide text-frost">Document</span>
-                  <input
-                    type="file"
-                    accept=".pdf,.doc,.docx"
-                    className="mt-1 max-w-[160px] text-xs text-muted file:mr-2 file:rounded file:border-0 file:bg-accent/20 file:px-2 file:py-1 file:text-[10px] file:text-accent"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) setRowFile(row.id, f);
-                    }}
-                  />
-                </label>
-                {row.file && <span className="font-mono text-[10px] text-eligible truncate max-w-[120px]" title={row.file.name}>{row.file.name}</span>}
+                {row.file && (
+                  <span style={{ fontSize: 10, color: "var(--eligible)", fontFamily: "var(--font-mono)", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.file.name}>
+                    ✓ {row.file.name}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => removeRow(row.id)}
-                  className="ml-auto shrink-0 px-2 font-mono text-[10px] uppercase text-deny hover:underline"
+                  style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "var(--deny)", fontWeight: 500 }}
                 >
-                  Drop
+                  Remove
                 </button>
               </div>
             ))}
@@ -246,18 +224,25 @@ export function Upload() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 border-t border-line pt-6">
+      {/* Action bar */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
         <button
           type="button"
           disabled={!canExtract || extractionMutation.isPending}
           onClick={() => extractionMutation.mutate()}
-          className="rounded bg-accent px-6 py-2.5 font-mono text-[11px] font-semibold uppercase tracking-wider text-white shadow-[0_0_24px_rgba(59,130,246,0.35)] disabled:opacity-40 disabled:shadow-none hover:bg-accent/90"
+          style={{
+            padding: "14px 32px", borderRadius: 0, cursor: canExtract && !extractionMutation.isPending ? "pointer" : "not-allowed",
+            border: "2px solid var(--txt)", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: "0.12em", textTransform: "uppercase",
+            color: canExtract && !extractionMutation.isPending ? "#fff" : "var(--muted)",
+            background: canExtract && !extractionMutation.isPending ? "var(--txt)" : "var(--bg)",
+            transition: "all 180ms ease",
+          }}
         >
-          {extractionMutation.isPending ? "Extracting…" : "Begin Extraction"}
+          {extractionMutation.isPending ? "Extracting…" : "Extract criteria"}
         </button>
         {tenderStats && (
-          <span className="font-mono text-xs text-muted">
-            Last tender ingest: blocks {tenderStats.blockCount} · pages {tenderStats.pages}
+          <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+            Last ingest: {tenderStats.blockCount} blocks · {tenderStats.pages} pages
           </span>
         )}
       </div>
