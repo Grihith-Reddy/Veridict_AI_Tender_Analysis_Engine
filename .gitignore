@@ -12,8 +12,12 @@ dist/
 # Secrets (never commit keys)
 .env
 .env.*
+.env.production
+backend/.env
+backend/.env.production
 !.env.example
-
+frontend/.env
+frontend/.env.production
 # Runtime artifacts
 backend/storage/
 *.log
