@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -9,7 +10,9 @@ from pydantic import BaseModel
 
 from ..deps import get_evaluation_service
 from ..engines import AuditTrail, CriteriaLensEngine
+from ..engines.audit import audit_log_path_for_session
 from ..models import AmbiguityGateResponse, OfficerActionRequest, RunEvaluationResponse
+from ..repository import RunRepository
 from ..services import EvaluationService
 from ..services.evaluation_session import store
 from ..services.phase8_pipeline import run_phase8_evaluation
@@ -76,6 +79,20 @@ def phase8_run(body: Phase8RunRequest):
         decisions, flags = run_phase8_evaluation(sess, audit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    repo = RunRepository()
+    repo.save_run(
+        run_id=body.session_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        payload={
+            "run_id": body.session_id,
+            "criteria": [c.model_dump(mode="json") for c in (sess.criteria or [])],
+            "bidder_evaluations": [b.model_dump(mode="json") for b in sess.bidder_evaluations],
+            "anomalies": [f.model_dump(mode="json") for f in flags],
+            "evidence_graph": sess.graph.model_dump(mode="json") if sess.graph else None,
+            "audit_log_path": str(audit_log_path_for_session(body.session_id)),
+        },
+    )
     return {
         "decisions": {bid: [d.model_dump(mode="json") for d in lst] for bid, lst in decisions.items()},
         "anomalies": [f.model_dump(mode="json") for f in flags],

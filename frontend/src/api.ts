@@ -4,6 +4,9 @@ import type {
   CriteriaExtractResponse,
   DemoSeedResponse,
   EvaluateRunResponse,
+  OfficerFeedbackRequest,
+  QueryRequest,
+  QueryResponse,
   TenderUploadResponse,
 } from "./types";
 
@@ -88,5 +91,23 @@ export async function resolveAmbiguity(params: {
 
 export async function runEvaluation(sessionId: string): Promise<EvaluateRunResponse> {
   const { data } = await api.post<EvaluateRunResponse>("/api/evaluate/run", { session_id: sessionId });
+  return data;
+}
+
+export async function submitOfficerFeedback(payload: OfficerFeedbackRequest): Promise<{ status: string }> {
+  const { data } = await api.post<{ status: string }>("/api/feedback", payload);
+  return data;
+}
+
+export async function queryEvaluationResults(payload: QueryRequest): Promise<QueryResponse> {
+  const { data } = await api.post<QueryResponse>("/api/query", payload);
+  return data;
+}
+
+export async function downloadBidderPdf(runId: string, bidderId: string): Promise<Blob> {
+  const { data } = await api.get<Blob>(
+    `/api/report/${encodeURIComponent(runId)}/bidder/${encodeURIComponent(bidderId)}/pdf`,
+    { responseType: "blob" },
+  );
   return data;
 }

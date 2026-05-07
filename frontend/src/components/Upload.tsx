@@ -75,18 +75,29 @@ function DropZone({ label, subtitle, accept, multiple, filesSummary, onDropFiles
 export function Upload() {
   const {
     sessionId, setTenderSession, tenderStats, tenderId,
-    bidderRows, setBidderRows, setBidderIdsOrdered,
+    bidderRows, bidderIdsOrdered, setBidderRows, setBidderIdsOrdered,
     setCriteria, setCriteriaAmbiguousInitially, setStep, setGlobalError,
   } = useWizard();
 
   const [tenderFile, setTenderFile] = useState<File | null>(null);
+  const useExistingDemoSession = Boolean(sessionId) && bidderIdsOrdered.length > 0 && !tenderFile && bidderRows.length === 0;
 
   const extractionMutation = useMutation({
     mutationFn: async () => {
+      setGlobalError(null);
+      if (useExistingDemoSession) {
+        if (!sessionId) throw new Error("No active session.");
+        const crit = await extractCriteria(sessionId);
+        setCriteriaAmbiguousInitially(crit.ambiguous_count);
+        setCriteria(crit.criteria);
+        setStep("criteria");
+        return;
+      }
+
       if (!tenderFile) throw new Error("Select the tender package.");
       if (bidderRows.length === 0 || bidderRows.some((r) => !r.file || !r.bidderName.trim()))
         throw new Error("Every bidder row needs a document and bidder name.");
-      setGlobalError(null);
+
       const t = await uploadTender(tenderFile);
       setTenderSession({ sessionId: t.session_id, tenderId: t.tender_id, blockCount: t.block_count, pages: t.pages });
       const ordered: string[] = [];
@@ -121,7 +132,9 @@ export function Upload() {
     });
   }
 
-  const canExtract = Boolean(tenderFile) && bidderRows.length > 0 && bidderRows.every((r) => r.file && r.bidderName.trim());
+  const canExtract =
+    useExistingDemoSession
+    || (Boolean(tenderFile) && bidderRows.length > 0 && bidderRows.every((r) => r.file && r.bidderName.trim()));
 
   return (
     <div>
@@ -178,15 +191,42 @@ export function Upload() {
             subtitle="Multiple files — merges into rows below"
             accept=".pdf,.doc,.docx"
             multiple
-            filesSummary={`${bidderRows.filter((r) => r.file).length} / ${bidderRows.length} files bound`}
+            filesSummary={
+              useExistingDemoSession
+                ? `${bidderIdsOrdered.length} / ${bidderIdsOrdered.length} files bound`
+                : bidderRows.length > 0
+                  ? `${bidderRows.filter((r) => r.file).length} / ${bidderRows.length} files bound`
+                  : undefined
+            }
             onDropFiles={onBidderFilesDropped}
           />
 
           <div style={{ marginTop: 12, maxHeight: 240, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }} className="scrollbar-thin">
             {bidderRows.length === 0 && (
               <p style={{ textAlign: "center", fontSize: 11, color: "var(--muted)", padding: "20px 0", fontFamily: "var(--font-mono)" }}>
-                No bidder rows — drop files or add a row.
+                {useExistingDemoSession
+                  ? `${bidderIdsOrdered.length} demo bidder dossiers loaded.`
+                  : "No bidder rows - drop files or add a row."}
               </p>
+            )}
+            {useExistingDemoSession && bidderRows.length === 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 6, padding: "0 0 8px" }}>
+                {bidderIdsOrdered.map((bid) => (
+                  <span
+                    key={bid}
+                    style={{
+                      padding: "4px 8px",
+                      border: "1px solid var(--border-soft)",
+                      background: "var(--bg)",
+                      fontSize: 10,
+                      color: "var(--txt)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    {bid}
+                  </span>
+                ))}
+              </div>
             )}
             {bidderRows.map((row: BidderFileRow, idx) => (
               <div key={row.id} style={{

@@ -43,6 +43,19 @@ class RunRepository:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS officer_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    criterion_id TEXT NOT NULL,
+                    bidder_id TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    officer_note TEXT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
 
     def save_run(self, *, run_id: str, created_at: str, payload: dict[str, Any]) -> None:
@@ -80,5 +93,25 @@ class RunRepository:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (run_id, criterion_id, bidder_id, action, actor, created_at),
+            )
+            conn.commit()
+
+    def save_officer_feedback(
+        self,
+        *,
+        run_id: str,
+        criterion_id: str,
+        bidder_id: str,
+        verdict: str,
+        officer_note: str | None,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO officer_feedback (run_id, criterion_id, bidder_id, verdict, officer_note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, criterion_id, bidder_id, verdict, officer_note, created_at),
             )
             conn.commit()

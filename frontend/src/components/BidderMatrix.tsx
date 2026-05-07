@@ -1,6 +1,8 @@
+import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { downloadBidderPdf, formatApiError, submitOfficerFeedback } from "../api";
 import { useWizard } from "../context/WizardContext";
-import type { Decision, VerdictDecision } from "../types";
+import type { Decision, OfficerFeedbackVerdict, VerdictDecision } from "../types";
 
 type StatusFilter = "all" | Decision;
 type RowSort = "name" | "status" | "confidence";
@@ -41,15 +43,64 @@ function rowBadgeStyle(d: Decision): React.CSSProperties {
   return { background: "rgba(179,89,0,0.1)", border: "1px solid rgba(179,89,0,0.4)", color: "var(--review)" };
 }
 
+function feedbackLabel(verdict: OfficerFeedbackVerdict): string {
+  return verdict === "agreed" ? "Agreed" : "Overridden";
+}
+
 export type BidderMatrixProps = { onOpenEvidence: (d: VerdictDecision) => void };
 
 export function BidderMatrix({ onOpenEvidence }: BidderMatrixProps) {
-  const { criteria, decisionsByBidder, bidderIdsOrdered } = useWizard();
+  const { sessionId, criteria, decisionsByBidder, bidderIdsOrdered, setGlobalError } = useWizard();
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [sortBy, setSortBy] = useState<RowSort>("name");
+  const [feedbackByCell, setFeedbackByCell] = useState<Record<string, OfficerFeedbackVerdict>>({});
 
   const criterionOrder = criteria.map((c) => c.id);
   const idToCrit = useMemo(() => Object.fromEntries(criteria.map((c) => [c.id, c])), [criteria]);
+  const feedbackKey = (bidderId: string, criterionId: string) => `${bidderId}::${criterionId}`;
+
+  const feedbackMutation = useMutation({
+    mutationFn: async (params: { bidderId: string; criterionId: string; verdict: OfficerFeedbackVerdict }) => {
+      if (!sessionId) throw new Error("No active session.");
+      await submitOfficerFeedback({
+        run_id: sessionId,
+        criterion_id: params.criterionId,
+        bidder_id: params.bidderId,
+        verdict: params.verdict,
+        officer_note: null,
+        created_at: new Date().toISOString(),
+      });
+      return params;
+    },
+    onMutate: () => setGlobalError(null),
+    onSuccess: (params) => {
+      setFeedbackByCell((prev) => ({
+        ...prev,
+        [feedbackKey(params.bidderId, params.criterionId)]: params.verdict,
+      }));
+    },
+    onError: (error: unknown) => setGlobalError(formatApiError(error)),
+  });
+
+  const pdfMutation = useMutation({
+    mutationFn: async (bidderId: string) => {
+      if (!sessionId) throw new Error("No active session.");
+      const blob = await downloadBidderPdf(sessionId, bidderId);
+      return { bidderId, blob };
+    },
+    onMutate: () => setGlobalError(null),
+    onSuccess: ({ bidderId, blob }) => {
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `veridict_${bidderId}_report.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+    },
+    onError: (error: unknown) => setGlobalError(formatApiError(error)),
+  });
 
   const bidderIds = useMemo(() => {
     const fromRun = [...bidderIdsOrdered];
@@ -146,24 +197,26 @@ export function BidderMatrix({ onOpenEvidence }: BidderMatrixProps) {
             </tr>
           </thead>
           <tbody>
-            {visibleRows.map((row, ri) => (
-              <tr
-                key={row.bidderId}
-                style={{
-                  borderBottom: "1px solid var(--border-soft)",
-                  background: ri % 2 === 1 ? "var(--zebra)" : "var(--surface)",
-                  transition: "background 120ms ease",
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(10,10,10,0.06)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = ri % 2 === 1 ? "var(--zebra)" : "var(--surface)"; }}
-              >
+            {visibleRows.map((row, ri) => {
+              const isDownloadingRow = pdfMutation.isPending && pdfMutation.variables === row.bidderId;
+              return (
+                <tr
+                  key={row.bidderId}
+                  style={{
+                    borderBottom: "1px solid var(--border-soft)",
+                    background: ri % 2 === 1 ? "var(--zebra)" : "var(--surface)",
+                    transition: "background 120ms ease",
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(10,10,10,0.06)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = ri % 2 === 1 ? "var(--zebra)" : "var(--surface)"; }}
+                >
                 <td style={{
                   position: "sticky", left: 0, zIndex: 5,
                   borderRight: "2px solid var(--txt)",
                   background: "inherit",
                   padding: "12px 16px",
                 }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span style={{ fontSize: 14, fontWeight: 600, color: "var(--txt)" }}>{row.bidderId}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{
@@ -178,10 +231,37 @@ export function BidderMatrix({ onOpenEvidence }: BidderMatrixProps) {
                         μ {(row.avg * 100).toFixed(0)}%
                       </span>
                     </div>
+                    <button
+                      type="button"
+                      disabled={!sessionId || isDownloadingRow}
+                      onClick={() => pdfMutation.mutate(row.bidderId)}
+                      style={{
+                        alignSelf: "flex-start",
+                        padding: "3px 8px",
+                        borderRadius: 0,
+                        border: "1px solid var(--border-soft)",
+                        background: "var(--surface)",
+                        cursor: !sessionId || isDownloadingRow ? "not-allowed" : "pointer",
+                        fontSize: 10,
+                        fontWeight: 600,
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--txt)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        opacity: !sessionId || isDownloadingRow ? 0.6 : 1,
+                      }}
+                    >
+                      {isDownloadingRow ? "Loading..." : "PDF"}
+                    </button>
                   </div>
                 </td>
                 {criterionOrder.map((cid) => {
                   const d = findDecision(row.bidderId, cid);
+                  const key = feedbackKey(row.bidderId, cid);
+                  const submittedVerdict = feedbackByCell[key];
+                  const isSubmittingThisCell = feedbackMutation.isPending
+                    && feedbackMutation.variables?.bidderId === row.bidderId
+                    && feedbackMutation.variables?.criterionId === cid;
                   if (!d) return (
                     <td key={`${row.bidderId}-${cid}`} style={{ padding: "8px 6px", textAlign: "center", verticalAlign: "middle" }}>
                       <span style={{ color: "var(--muted)", fontSize: 12 }}>—</span>
@@ -189,35 +269,75 @@ export function BidderMatrix({ onOpenEvidence }: BidderMatrixProps) {
                   );
                   return (
                     <td key={`${row.bidderId}-${cid}`} style={{ padding: "8px 6px", textAlign: "center", verticalAlign: "middle" }}>
-                      <button
-                        type="button"
-                        onClick={() => onOpenEvidence(d)}
-                        style={{
-                          display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                          width: "100%", padding: "6px 4px", borderRadius: 0,
-                          border: "1px solid transparent", background: "transparent",
-                          cursor: "pointer", transition: "all 140ms ease",
-                        }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--zebra)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-soft)"; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.borderColor = "transparent"; }}
-                      >
-                        <span style={{
-                          display: "inline-block", padding: "3px 8px", borderRadius: 0,
-                          fontSize: 10, fontWeight: 600, fontFamily: "var(--font-mono)",
-                          textTransform: "uppercase", letterSpacing: "0.06em",
-                          ...cellStyle(d.decision),
-                        }}>
-                          {cellLabel(d.decision)}
-                        </span>
-                        <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
-                          {(d.confidence * 100).toFixed(0)}%
-                        </span>
-                      </button>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenEvidence(d)}
+                          style={{
+                            display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                            width: "100%", padding: "6px 4px", borderRadius: 0,
+                            border: "1px solid transparent", background: "transparent",
+                            cursor: "pointer", transition: "all 140ms ease",
+                          }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--zebra)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-soft)"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.borderColor = "transparent"; }}
+                        >
+                          <span style={{
+                            display: "inline-block", padding: "3px 8px", borderRadius: 0,
+                            fontSize: 10, fontWeight: 600, fontFamily: "var(--font-mono)",
+                            textTransform: "uppercase", letterSpacing: "0.06em",
+                            ...cellStyle(d.decision),
+                          }}>
+                            {cellLabel(d.decision)}
+                          </span>
+                          <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                            {(d.confidence * 100).toFixed(0)}%
+                          </span>
+                        </button>
+
+                        {submittedVerdict ? (
+                          <span style={{ fontSize: 10, color: "var(--eligible)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
+                            Saved: {feedbackLabel(submittedVerdict)}
+                          </span>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                            <button
+                              type="button"
+                              disabled={!sessionId || isSubmittingThisCell}
+                              onClick={() => feedbackMutation.mutate({ bidderId: row.bidderId, criterionId: cid, verdict: "agreed" })}
+                              style={{
+                                padding: "3px 7px", borderRadius: 0, border: "1px solid var(--border-soft)",
+                                background: "var(--surface)", cursor: !sessionId || isSubmittingThisCell ? "not-allowed" : "pointer",
+                                fontSize: 10, fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--txt)",
+                                textTransform: "uppercase", letterSpacing: "0.06em",
+                                opacity: !sessionId || isSubmittingThisCell ? 0.6 : 1,
+                              }}
+                            >
+                              {isSubmittingThisCell && feedbackMutation.variables?.verdict === "agreed" ? "Saving..." : "Agreed"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!sessionId || isSubmittingThisCell}
+                              onClick={() => feedbackMutation.mutate({ bidderId: row.bidderId, criterionId: cid, verdict: "overridden" })}
+                              style={{
+                                padding: "3px 7px", borderRadius: 0, border: "1px solid var(--border-soft)",
+                                background: "var(--surface)", cursor: !sessionId || isSubmittingThisCell ? "not-allowed" : "pointer",
+                                fontSize: 10, fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--txt)",
+                                textTransform: "uppercase", letterSpacing: "0.06em",
+                                opacity: !sessionId || isSubmittingThisCell ? 0.6 : 1,
+                              }}
+                            >
+                              {isSubmittingThisCell && feedbackMutation.variables?.verdict === "overridden" ? "Saving..." : "Override"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   );
                 })}
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 

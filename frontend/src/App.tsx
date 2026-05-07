@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatApiError, loadDemoSeed } from "./api";
+import { formatApiError, loadDemoSeed, queryEvaluationResults } from "./api";
 import { AnomalyPanel } from "./components/AnomalyPanel";
 import { BidderMatrix } from "./components/BidderMatrix";
 import { CriteriaReview } from "./components/CriteriaReview";
@@ -74,12 +74,12 @@ function SplashOverlay({ onComplete }: { onComplete: () => void }) {
     >
       <div
         style={{
-          width: phase === "dot" ? 14 : "200vmax",
-          height: phase === "dot" ? 14 : "200vmax",
-          borderRadius: phase === "dot" ? "50%" : "50%",
+          position: "absolute",
+          inset: 0,
           background: "#0a0a0a",
+          clipPath: phase === "dot" ? "circle(7px at 50% 50%)" : "circle(160vmax at 50% 50%)",
           transition: phase === "expand"
-            ? "width 0.78s cubic-bezier(0.65,0,0.35,1), height 0.78s cubic-bezier(0.65,0,0.35,1)"
+            ? "clip-path 0.78s cubic-bezier(0.65,0,0.35,1)"
             : "none",
           display: "flex", alignItems: "center", justifyContent: "center",
           overflow: "hidden",
@@ -231,14 +231,67 @@ function GlobalBanner() {
 
 /* ── Matrix workspace ────────────────────────────────────────────── */
 function MatrixWorkspace() {
-  const { criteria } = useWizard();
+  const { sessionId, criteria, setGlobalError } = useWizard();
   const [bottomTab, setBottomTab]           = useState<"legend" | "anomalies">("anomalies");
   const [drawerDecision, setDrawerDecision] = useState<VerdictDecision | null>(null);
+  const [queryText, setQueryText]           = useState("");
+  const [queryAnswer, setQueryAnswer]       = useState<string | null>(null);
   const idToCrit = Object.fromEntries(criteria.map((c) => [c.id, c]));
+
+  const queryMutation = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("No active session.");
+      const question = queryText.trim();
+      if (!question) throw new Error("Enter a question first.");
+      return queryEvaluationResults({ run_id: sessionId, question });
+    },
+    onMutate: () => setGlobalError(null),
+    onSuccess: (data) => setQueryAnswer(data.answer),
+    onError: (e: unknown) => setGlobalError(formatApiError(e)),
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <BidderMatrix onOpenEvidence={(d) => setDrawerDecision(d)} />
+
+      {sessionId && (
+        <div style={{ background: "var(--surface)", border: "2px solid var(--txt)", borderRadius: 0, padding: "18px 20px" }}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              queryMutation.mutate();
+            }}
+            style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}
+          >
+            <input
+              value={queryText}
+              onChange={(e) => setQueryText(e.target.value)}
+              placeholder="Ask a question about the evaluation results..."
+              style={{ flex: 1, minWidth: 260 }}
+            />
+            <button
+              type="submit"
+              disabled={queryMutation.isPending || !queryText.trim()}
+              style={{
+                padding: "12px 24px", borderRadius: 0, border: "2px solid var(--txt)",
+                background: queryMutation.isPending || !queryText.trim() ? "var(--bg)" : "var(--txt)",
+                color: queryMutation.isPending || !queryText.trim() ? "var(--muted)" : "#fff",
+                fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+                cursor: queryMutation.isPending || !queryText.trim() ? "not-allowed" : "pointer",
+                transition: "all 160ms ease",
+              }}
+            >
+              {queryMutation.isPending ? "Asking..." : "Submit"}
+            </button>
+          </form>
+          {queryAnswer && (
+            <p style={{ marginTop: 12, fontSize: 13, color: "var(--txt)", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+              {queryAnswer}
+            </p>
+          )}
+        </div>
+      )}
+
       <EvidenceDrawer
         open={Boolean(drawerDecision)}
         decision={drawerDecision}
@@ -587,10 +640,10 @@ function applyDemoHydrate(args: {
   setBidderRows([]);
   clearAnomalyReviews();
   setTenderSession({ sessionId: data.session_id, tenderId: data.tender_id, blockCount: data.tender_block_count, pages: data.tender_pages });
-  setCriteriaAmbiguousInitially(data.ambiguous_initially);
+  setCriteriaAmbiguousInitially(0);
   setBidderIdsOrdered(data.bidder_ids_ordered);
-  setCriteria(data.criteria);
-  setDecisionsByBidder(data.decisions);
-  setAnomalies(data.anomalies);
-  setStep("matrix");
+  setCriteria([]);
+  setDecisionsByBidder({});
+  setAnomalies([]);
+  setStep("upload");
 }

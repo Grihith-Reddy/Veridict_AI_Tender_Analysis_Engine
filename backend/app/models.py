@@ -18,6 +18,11 @@ class Decision(str, Enum):
     NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 
 
+class OfficerFeedbackVerdict(str, Enum):
+    agreed = "agreed"
+    overridden = "overridden"
+
+
 class TextBlock(BaseModel):
     id: str
     doc_name: str
@@ -132,3 +137,23 @@ class OfficerActionRequest(BaseModel):
     bidder_id: str
     action: str
     actor: str = "officer"
+
+
+class OfficerFeedback(BaseModel):
+    run_id: str
+    criterion_id: str
+    bidder_id: str
+    verdict: OfficerFeedbackVerdict
+    officer_note: str | None = None
+    created_at: datetime
+
+
+class QueryRequest(BaseModel):
+    run_id: str
+    question: str
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    run_id: str
+    question: str

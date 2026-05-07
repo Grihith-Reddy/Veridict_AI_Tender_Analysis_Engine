@@ -10,8 +10,10 @@ from .api import (
     demo_router,
     evaluate_phase8_router,
     evaluate_router,
+    feedback_router,
     legacy_upload_router,
     phase8_report_router,
+    query_router,
     report_router,
     upload_router,
 )
@@ -46,6 +48,8 @@ app.include_router(upload_router)
 app.include_router(legacy_upload_router)
 app.include_router(evaluate_phase8_router)
 app.include_router(evaluate_router)
+app.include_router(feedback_router)
+app.include_router(query_router)
 app.include_router(phase8_report_router)
 app.include_router(report_router)
 

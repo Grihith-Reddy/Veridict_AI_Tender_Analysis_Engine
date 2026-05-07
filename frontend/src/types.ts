@@ -47,6 +47,28 @@ export interface AnomalyFlag {
   severity: string;
 }
 
+export type OfficerFeedbackVerdict = "agreed" | "overridden";
+
+export interface OfficerFeedbackRequest {
+  run_id: string;
+  criterion_id: string;
+  bidder_id: string;
+  verdict: OfficerFeedbackVerdict;
+  officer_note: string | null;
+  created_at: string;
+}
+
+export interface QueryRequest {
+  run_id: string;
+  question: string;
+}
+
+export interface QueryResponse {
+  answer: string;
+  run_id: string;
+  question: string;
+}
+
 export interface TenderUploadResponse {
   session_id: string;
   tender_id: string;

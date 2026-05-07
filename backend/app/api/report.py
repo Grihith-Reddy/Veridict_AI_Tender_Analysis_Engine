@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
+from ..config import settings
 from ..deps import get_evaluation_service
 from ..engines.audit import export_audit, verify_chain
-from ..reporting import generate_phase8_pdf
+from ..models import BidderEvaluation, CriterionSchema
+from ..reporting import generate_bidder_pdf, generate_phase8_pdf
+from ..repository import RunRepository
 from ..services import EvaluationService
 from ..services.evaluation_session import store
 
@@ -53,6 +56,42 @@ def phase8_report_pdf(session_id: str):
         content=buf.getvalue(),
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="veridict_{session_id}.pdf"'},
+    )
+
+
+@phase8_report_router.get("/{run_id}/bidder/{bidder_id}/pdf")
+def phase8_bidder_report_pdf(run_id: str, bidder_id: str):
+    repo = RunRepository()
+    payload = repo.get_run_payload(run_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="run_id not found")
+
+    criteria_raw = payload.get("criteria")
+    bidder_evaluations_raw = payload.get("bidder_evaluations")
+    if not isinstance(criteria_raw, list) or not isinstance(bidder_evaluations_raw, list):
+        raise HTTPException(status_code=404, detail="run_id payload invalid")
+
+    criteria = [CriterionSchema.model_validate(c) for c in criteria_raw]
+    bidder_eval: BidderEvaluation | None = None
+    for raw in bidder_evaluations_raw:
+        candidate = BidderEvaluation.model_validate(raw)
+        if candidate.bidder_id == bidder_id:
+            bidder_eval = candidate
+            break
+    if bidder_eval is None:
+        raise HTTPException(status_code=404, detail="bidder_id not found")
+
+    output_path = settings.storage_dir / "reports" / run_id / f"veridict_{bidder_id}_report.pdf"
+    pdf_path = generate_bidder_pdf(
+        bidder_evaluation=bidder_eval,
+        criteria=criteria,
+        output_path=output_path,
+        run_id=run_id,
+    )
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        filename=f"veridict_{bidder_id}_report.pdf",
     )
 
 
