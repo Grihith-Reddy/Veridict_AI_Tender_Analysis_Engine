@@ -8,15 +8,11 @@ import math
 import re
 from dataclasses import dataclass
 
-import numpy as np
-
 from ..config import settings
 from ..gemini_client import gemini_generate_text
 from ..models import CriterionSchema, EvidenceRecord, TextBlock
 
 logger = logging.getLogger(__name__)
-
-_ST_MODEL = None
 
 SYNONYM_LEXICON = {
     "annual_turnover": ["turnover", "revenue", "gross receipts", "net sales", "total income"],
@@ -27,14 +23,6 @@ SYNONYM_LEXICON = {
 
 TOP_K_BLOCKS = 5
 HTTP_TIMEOUT = 60.0
-
-try:
-    from sentence_transformers import SentenceTransformer as _SentenceTransformer
-
-    _ST_MODEL = _SentenceTransformer("all-MiniLM-L6-v2")
-except Exception as exc:  # pragma: no cover
-    logger.warning("sentence-transformers model not loaded (%s); using lexical retrieval fallback.", exc)
-    _ST_MODEL = None
 
 
 @dataclass
@@ -74,17 +62,6 @@ def _retrieve_lexical(query: str, blocks: list[TextBlock]) -> list[RankedBlock]:
     return scored[:TOP_K_BLOCKS]
 
 
-def _retrieve_dense(query: str, blocks: list[TextBlock]) -> list[RankedBlock]:
-    if not blocks or _ST_MODEL is None:
-        return _retrieve_lexical(query, blocks)
-    texts = [b.text for b in blocks]
-    vectors = np.asarray(_ST_MODEL.encode(texts, normalize_embeddings=True))
-    q_vector = np.asarray(_ST_MODEL.encode([query], normalize_embeddings=True))[0]
-    scores = np.dot(vectors, q_vector)
-    idx = np.argsort(scores)[::-1][:TOP_K_BLOCKS]
-    return [RankedBlock(block=blocks[int(i)], score=float(scores[int(i)])) for i in idx]
-
-
 def _scale_currency(amount: float, unit: str | None) -> float:
     ul = (unit or "").lower()
     if ul == "lakh":
@@ -99,9 +76,6 @@ def _scale_currency(amount: float, unit: str | None) -> float:
 
 
 def _regex_extract_value(block_text: str) -> float | str | None:
-    """
-    Prefer INR-style amounts, then bare crore/lakh amounts, percentages, years (first hit wins).
-    """
     m = re.search(
         r"(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*(crore|lakh|million|billion)?",
         block_text,
@@ -136,7 +110,9 @@ def _strip_json_fence(raw: str) -> str:
     return s
 
 
-def _llm_extract_block(api_key: str, criterion_description: str, block_text: str) -> tuple[bool, float | str | None]:
+def _llm_extract_block(
+    api_key: str, criterion_description: str, block_text: str
+) -> tuple[bool, float | str | None]:
     truncated = block_text[:8000]
     user_msg = (
         f"Extract the numeric or text value that satisfies this criterion: {criterion_description}\n"
@@ -253,7 +229,8 @@ def probe_bidder_sync(
     results: list[EvidenceRecord] = []
     for criterion in criteria:
         query = _build_retrieval_query(criterion)
-        ranked = _retrieve_dense(query, blocks)
+        # Use lexical retrieval — no sentence-transformers dependency
+        ranked = _retrieve_lexical(query, blocks)
         results.append(_probe_one_criterion(criterion, bidder_id, ranked, gemini_api_key))
     return results
 
@@ -264,11 +241,13 @@ async def probe_bidder(
     bidder_id: str,
     gemini_api_key: str,
 ) -> list[EvidenceRecord]:
-    return await asyncio.to_thread(probe_bidder_sync, text_blocks, criteria, bidder_id, gemini_api_key)
+    return await asyncio.to_thread(
+        probe_bidder_sync, text_blocks, criteria, bidder_id, gemini_api_key
+    )
 
 
 class DocProbeEngine:
-    """Facade wired to synchronous evaluation pipelines (Phase 8 uses ``probe_bidder_sync``)."""
+    """Facade wired to synchronous evaluation pipelines."""
 
     def probe_bidder(
         self,

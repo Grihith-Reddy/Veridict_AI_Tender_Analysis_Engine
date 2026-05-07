@@ -5,7 +5,6 @@ import logging
 from collections import Counter, defaultdict
 from typing import TypeAlias
 
-import numpy as np
 from pydantic import BaseModel, Field
 
 from ..models import AnomalyReport, CriterionSchema, CriterionType, EvaluationResult, EvidenceRecord
@@ -22,6 +21,19 @@ class AnomalyFlag(BaseModel):
     anomaly_type: str
     description: str
     severity: str = Field(description="high or medium")
+
+
+# ── Pure Python percentile — no numpy/scipy needed ────────────────────────────
+def _percentile(data: list[float], pct: float) -> float:
+    s = sorted(data)
+    if not s:
+        return 0.0
+    k = (len(s) - 1) * pct / 100.0
+    f = int(k)
+    c = f + 1
+    if c >= len(s):
+        return float(s[-1])
+    return float(s[f]) + (float(s[c]) - float(s[f])) * (k - f)
 
 
 def _normalize_doc_pattern(doc_name: str) -> str:
@@ -63,9 +75,9 @@ def _numeric_outliers(
     if len(pairs) < 3:
         return []
 
-    values = np.array([v for _, v in pairs], dtype=np.float64)
-    q1 = float(np.quantile(values, 0.25))
-    q3 = float(np.quantile(values, 0.75))
+    values = [v for _, v in pairs]
+    q1 = _percentile(values, 25)
+    q3 = _percentile(values, 75)
     iqr = q3 - q1
     lower = q1 - 1.5 * iqr
     upper = q3 + 1.5 * iqr
@@ -79,7 +91,10 @@ def _numeric_outliers(
             criterion_id=criterion.id,
             bidder_ids=outlier_ids,
             anomaly_type="outlier_value",
-            description=f"Numeric values outside Tukey bounds [{lower:.4g}, {upper:.4g}] (IQR-based).",
+            description=(
+                f"Numeric values outside Tukey bounds "
+                f"[{lower:.4g}, {upper:.4g}] (IQR-based)."
+            ),
             severity="high",
         )
     ]
@@ -114,7 +129,10 @@ def _document_pattern_mismatch(
             criterion_id=criterion.id,
             bidder_ids=mismatched,
             anomaly_type="document_pattern_mismatch",
-            description=f"Majority document/source pattern ({dominant}) covers {cnt}/{total} bidders; these bidders differ.",
+            description=(
+                f"Majority document/source pattern ({dominant}) covers "
+                f"{cnt}/{total} bidders; these bidders differ."
+            ),
             severity="medium",
         )
     ]
@@ -159,8 +177,8 @@ def _cross_document_conflicts(
 
             crit_ids = {cid for cid, _ in nums}
             desc = (
-                f"Field group {field_key}: values differ by {mismatch:.1%} across documents "
-                f"{sorted(doc_names)!s}."
+                f"Field group {field_key}: values differ by {mismatch:.1%} "
+                f"across documents {sorted(doc_names)!s}."
             )
             flags.append(
                 AnomalyFlag(
@@ -230,7 +248,9 @@ class ConsistencyEngine:
         for r in results:
             by_bidder[r.bidder_id].append(r)
         for bidder_id in by_bidder:
-            by_bidder[bidder_id].sort(key=lambda r: cid_order.get(r.criterion_id, 999))
+            by_bidder[bidder_id].sort(
+                key=lambda r: cid_order.get(r.criterion_id, 999)
+            )
 
         flags = run_consistency_check(dict(by_bidder), evidence_by_bidder, criteria)
         return [self._flag_to_report(f) for f in flags]
