@@ -21,6 +21,34 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GEMINI_MODEL", "VERIDICT_GEMINI_MODEL"),
         description="Gemini model id for generateContent (default: Gemini 2.0 Flash).",
     )
+    gemini_max_retries: int = Field(
+        default=4,
+        ge=0,
+        le=10,
+        validation_alias=AliasChoices("GEMINI_MAX_RETRIES", "VERIDICT_GEMINI_MAX_RETRIES"),
+        description="Max automatic retries for retryable Gemini errors (429/5xx/timeouts).",
+    )
+    gemini_backoff_initial_s: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=60.0,
+        validation_alias=AliasChoices("GEMINI_BACKOFF_INITIAL_S", "VERIDICT_GEMINI_BACKOFF_INITIAL_S"),
+        description="Initial exponential backoff delay (seconds) for Gemini retries.",
+    )
+    gemini_backoff_max_s: float = Field(
+        default=20.0,
+        ge=0.0,
+        le=300.0,
+        validation_alias=AliasChoices("GEMINI_BACKOFF_MAX_S", "VERIDICT_GEMINI_BACKOFF_MAX_S"),
+        description="Maximum backoff delay (seconds) for Gemini retries.",
+    )
+    gemini_min_interval_s: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=10.0,
+        validation_alias=AliasChoices("GEMINI_MIN_INTERVAL_S", "VERIDICT_GEMINI_MIN_INTERVAL_S"),
+        description="Minimum delay between Gemini calls to smooth burst traffic.",
+    )
     storage_dir: Path = Field(
         default=Path("storage"),
         validation_alias=AliasChoices("VERIDICT_STORAGE_DIR", "STORAGE_DIR"),
